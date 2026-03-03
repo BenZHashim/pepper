@@ -1,0 +1,27 @@
+# Web framework
+fastapi>=0.110.0
+uvicorn[standard]>=0.27.0
+
+# MCP
+fastmcp>=2.0.0
+
+# AI
+anthropic>=0.25.0
+voyageai>=0.3.0
+
+# SMS
+twilio>=9.0.0
+
+# Database
+asyncpg>=0.29.0            # Async PostgreSQL driver
+pgvector>=0.3.0            # pgvector Python helpers
+python-dateutil>=2.9.0
+
+# Scheduling
+apscheduler>=3.10.0
+
+# Utils
+python-dotenv>=1.0.0
+python-multipart>=0.0.9
+
+sentence-transformers>=2.3.0

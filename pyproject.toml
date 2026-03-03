@@ -1,0 +1,22 @@
+[project]
+name = "mcplearn"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.14"
+dependencies = [
+    "anthropic>=0.25.0",
+    "apscheduler>=3.10.0",
+    "chromadb>=0.4.0",
+    "fastapi>=0.110.0",
+    "fastmcp>=2.0.0",
+    "google-api-python-client>=2.190.0",
+    "google-auth-httplib2>=0.3.0",
+    "google-auth-oauthlib>=1.2.4",
+    "mcp[cli]>=1.26.0",
+    "python-dateutil>=2.9.0",
+    "python-dotenv>=1.0.0",
+    "python-multipart>=0.0.9",
+    "twilio>=9.0.0",
+    "uvicorn[standard]>=0.27.0",
+]
