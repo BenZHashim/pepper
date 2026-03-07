@@ -10,7 +10,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY mcp_server.py embeddings.py memory_utils.py ./
+COPY mcp_server.py mcp_shared.py embeddings.py memory_utils.py ./
+COPY tools_user.py tools_reminders.py tools_gmail.py tools_memory.py ./
 
 EXPOSE 8001
 

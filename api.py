@@ -7,11 +7,13 @@ Run with:
     uvicorn main:app --reload --port 5000
 """
 
+from email import message
 import os
 import json
 import logging
 from contextlib import asynccontextmanager
 from datetime import datetime
+import re
 from zoneinfo import ZoneInfo
 from zoneinfo import ZoneInfo
 
@@ -60,8 +62,8 @@ ALLOWED_PHONES = set(os.getenv("ALLOWED_PHONES", "").split(","))  # Comma-separa
 TIMEZONE           = os.getenv("TIMEZONE", "America/Los_Angeles")
 ADMIN_TOKEN        = os.getenv("ADMIN_TOKEN", "admin")
 
-SYSTEM_PROMPT = """You are a personal AI assistant accessible via SMS. 
-You have tools to manage reminders and save/search memories.
+SYSTEM_PROMPT = """You are a personal AI assistant named Pepper that is accessible via SMS. 
+You have tools to manage reminders, save/search memories and search gmail.
 
 User Preferences:
 {preferences_prompt}
@@ -74,6 +76,8 @@ System Guidelines:
 - Today's date and time: {now}
 - When setting reminders confirm the time back to the user in their local time.
 - If you're unsure about a time/date, ask for clarification before creating the reminder.
+- When using conversation history tools, use the results as internal context only. 
+- Do not include message IDs, roles, or timestamps in your response unless the user specifically asks for them. Present the information naturally.
 """
 
 # ─── Clients ──────────────────────────────────────────────────────────────────
@@ -105,7 +109,8 @@ async def get_db_pool() -> asyncpg.Pool:
         )
     return _db_pool
 
-
+def _strip_context(message: str) -> str:
+    return re.sub(r'^\[.*?\]\s*', '', message)
 # ─── Registration Helpers ─────────────────────────────────────────────────────
 
 _REGISTRATION_TOOL = {
@@ -236,6 +241,14 @@ async def run_agent(phone: str, user_message: str, user: dict) -> str:
     system = _get_user_system_prompt(user)
 
     for _ in range(5):
+        token_count = anthropic_client.messages.count_tokens(
+            model="claude-haiku-4-5",
+            system=system,
+            tools=tools,
+            messages=messages,
+        )
+        logger.info(f"Input tokens: {token_count.input_tokens}")
+
         response = anthropic_client.messages.create(
             model="claude-haiku-4-5",
             max_tokens=500,
@@ -243,6 +256,7 @@ async def run_agent(phone: str, user_message: str, user: dict) -> str:
             tools=tools,
             messages=messages,
         )
+        logger.info(f"Output tokens: {response.usage.output_tokens}")
 
         text_content = ""
         tool_uses = []
@@ -257,6 +271,7 @@ async def run_agent(phone: str, user_message: str, user: dict) -> str:
             if not text_content.strip():
                 logger.warning(f"Claude returned empty text_content for {phone}")
                 text_content = "Done!"
+            text_content = _strip_context(text_content)
             await conversation_manager.add_message(phone, "assistant", text_content)
             return text_content
 
@@ -547,6 +562,85 @@ async def embed_all_messages(
 
         logger.info(f"Embedding run complete — embedded={embedded}, skipped={skipped}, errors={errors}")
         return {"embedded": embedded, "skipped": skipped, "errors": errors}
+
+@app.get("/auth/gmail/callback")
+async def gmail_callback(code: str, state: str):
+    """
+    Google OAuth2 redirect target.
+    `state` is a base64url-encoded JSON payload containing the user's phone
+    number and the PKCE code_verifier generated when the auth URL was created.
+    Exchanges the auth code for tokens via a plain POST (no Flow object) so
+    that google-auth-oauthlib's internal PKCE handling doesn't interfere.
+    """
+    import base64
+    import requests as google_requests
+    from fastapi.responses import PlainTextResponse
+
+    # ── Decode state ──────────────────────────────────────────────────────────
+    padding       = (4 - len(state) % 4) % 4   # 0 if already aligned
+    state_json    = base64.urlsafe_b64decode(state + "=" * padding).decode()
+    state_data    = json.loads(state_json)
+    phone         = state_data["p"]
+    code_verifier = state_data["v"]
+
+    client_id     = os.getenv("GOOGLE_CLIENT_ID")
+    client_secret = os.getenv("GOOGLE_CLIENT_SECRET")
+    redirect_uri  = os.getenv("GOOGLE_REDIRECT_URI")
+
+    # ── Exchange code for tokens (plain HTTP — no Flow) ───────────────────────
+    # We avoid Flow.fetch_token() because newer google-auth-oauthlib versions
+    # generate their own PKCE verifier internally, making ours invalid.
+    token_resp = google_requests.post(
+        "https://oauth2.googleapis.com/token",
+        data={
+            "code":          code,
+            "client_id":     client_id,
+            "client_secret": client_secret,
+            "redirect_uri":  redirect_uri,
+            "grant_type":    "authorization_code",
+            "code_verifier": code_verifier,
+        },
+    )
+
+    if not token_resp.ok:
+        logger.error(f"Gmail token exchange failed: {token_resp.text}")
+        return PlainTextResponse("Failed to connect Gmail. Please try again.", status_code=500)
+
+    token_data = token_resp.json()
+    tokens = {
+        "token":         token_data.get("access_token"),
+        "refresh_token": token_data.get("refresh_token"),
+        "token_uri":     "https://oauth2.googleapis.com/token",
+        "client_id":     client_id,
+        "client_secret": client_secret,
+        "scopes":        token_data.get("scope", "").split(),
+        "expiry":        None,
+    }
+    pool  = await get_db_pool()
+    async with pool.acquire() as conn:
+        await conn.execute(
+            "UPDATE users SET gmail_tokens = $1 WHERE phone = $2",
+            json.dumps(tokens),
+            phone,
+        )
+
+    message = "Your Gmail is now connected! You can ask me to check your emails."
+    conversation_manager.add_message(phone, "assistant", message)
+
+    try:
+        use_whatsapp = os.getenv("USE_WHATSAPP", "false").lower() == "true"
+        from_number  = f"whatsapp:{TWILIO_PHONE_NUMBER}" if use_whatsapp else TWILIO_PHONE_NUMBER
+        to_number    = f"whatsapp:{phone}" if use_whatsapp else phone
+        twilio_client.messages.create(
+            body=message,
+            from_=from_number,
+            to=to_number,
+        )
+    except Exception as e:
+        logger.error(f"Failed to send Gmail confirmation SMS to {phone}: {e}")
+
+    return PlainTextResponse("Gmail connected! You can close this tab and go back to texting.")
+
 
 @app.get("/health")
 async def health():

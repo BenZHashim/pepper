@@ -34,6 +34,9 @@ services:
       MCP_PORT: 8001
       TIMEZONE: ${TIMEZONE:-America/New_York}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID}
+      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET}
+      GOOGLE_REDIRECT_URI: ${GOOGLE_REDIRECT_URI}
     depends_on:
       db:
         condition: service_healthy          # Wait for Postgres to be ready
@@ -81,6 +84,9 @@ services:
       DATABASE_URL: postgresql://${POSTGRES_USER:-smsai}:${POSTGRES_PASSWORD:-smsai_secret}@db:5432/${POSTGRES_DB:-smsai}
       USE_WHATSAPP: ${USE_WHATSAPP:-False}
       ADMIN_TOKEN: ${ADMIN_TOKEN:-admin}
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID}
+      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET}
+      GOOGLE_REDIRECT_URI: ${GOOGLE_REDIRECT_URI}
     depends_on:
       mcp:
         condition: service_healthy

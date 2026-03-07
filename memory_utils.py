@@ -16,7 +16,7 @@ from embeddings import EmbeddingManager
 # ── Scoring ───────────────────────────────────────────────────────────────────
 
 HALF_LIFE_HOURS       = 12.0    # Retrieval recency decay (short — for search ranking)
-RETENTION_HALF_LIFE_DAYS = 14.0 # Retention recency decay (longer — for pruning decisions)
+RETENTION_HALF_LIFE_DAYS = 10.0 # Retention recency decay (longer — for pruning decisions)
 RETENTION_BOOST       = 2.0     # Additive boost to retention score so that messages are not immediately pruned after their first retrieval
 logger = logging.getLogger(__name__)
 
@@ -214,4 +214,23 @@ async def run_hybrid_search(
         for e in candidates.values()
     ]
     scored.sort(key=lambda x: x[0], reverse=True)
-    return [row for _, row in scored[:semantic_k]]
+    search_rows = [row for _, row in scored[:semantic_k]]
+    await increment_retrieval_counts(conn, [row["id"] for row in search_rows])
+
+    return search_rows
+
+async def increment_retrieval_counts(
+    conn: asyncpg.Connection,
+    message_ids: list[int],
+) -> None:
+    if not message_ids:
+        return
+    await conn.execute(
+        """
+        UPDATE messages
+        SET retrieval_count   = retrieval_count + 1,
+            last_retrieved_at = NOW()
+        WHERE id = ANY($1::int[])
+        """,
+        message_ids,
+    )

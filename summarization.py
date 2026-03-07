@@ -46,7 +46,7 @@ logger = logging.getLogger(__name__)
 # ── Tuning knobs ──────────────────────────────────────────────────────────────
 
 PRUNE_AGE_DAYS          = 0     # Only consider messages older than this
-RETENTION_SCORE_THRESH  = 0.2   # A window is a candidate if its *average* score
+RETENTION_SCORE_THRESH  = 1   # A window is a candidate if its *average* score
                                  # is below this threshold
 WINDOW_SIZE_MESSAGES   = 20    # Number of messages per window when scoring for pruning
 
@@ -241,7 +241,11 @@ class SummarizationManager:
         # ── Score each window by average retention ────────────────────────────
         def avg_retention(window_rows) -> float:
             scores = [
-                retention_score(r["retrieval_count"], r["last_retrieved_at"], now)
+                retention_score(
+                    r["retrieval_count"],
+                    r["last_retrieved_at"] or r["period_end"],  # never-retrieved → use message age
+                    now,
+                )
                 for r in window_rows
             ]
             return sum(scores) / len(scores)

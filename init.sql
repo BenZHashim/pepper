@@ -30,6 +30,7 @@ CREATE TABLE IF NOT EXISTS users (
     phone               TEXT        NOT NULL UNIQUE,
     preferences_prompt  TEXT        NOT NULL DEFAULT 'You are a helpful personal AI assistant.',
     timezone            TEXT,
+    gmail_tokens        JSONB,
     created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 

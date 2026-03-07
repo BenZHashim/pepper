@@ -21,13 +21,14 @@ Memory lifecycle (summarisation, pruning) lives in summarisation_manager.py.
 import json
 import logging
 from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 from typing import Optional
 
 import asyncpg
 from pgvector.asyncpg import register_vector
 
 from embeddings import EmbeddingManager
-from memory_utils import extract_text, recency_score, to_tsquery, run_hybrid_search
+from memory_utils import extract_text, to_tsquery, run_hybrid_search
 
 logger = logging.getLogger(__name__)
 
@@ -63,23 +64,6 @@ class ConversationManager:
     async def _get_user_id(self, conn: asyncpg.Connection, phone: str) -> Optional[int]:
         row = await conn.fetchrow("SELECT id FROM users WHERE phone = $1", phone)
         return row["id"] if row else None
-
-    async def _increment_retrieval_counts(
-        self,
-        conn: asyncpg.Connection,
-        message_ids: list[int],
-    ) -> None:
-        if not message_ids:
-            return
-        await conn.execute(
-            """
-            UPDATE messages
-            SET retrieval_count   = retrieval_count + 1,
-                last_retrieved_at = NOW()
-            WHERE id = ANY($1::int[])
-            """,
-            message_ids,
-        )
 
     # ── Search legs ───────────────────────────────────────────────────────────
 
@@ -256,9 +240,7 @@ class ConversationManager:
                     w_recency=W_RECENCY,
                     semantic_k=SEMANTIC_K,
                 )
-                await self._increment_retrieval_counts(
-                    conn, [row["id"] for row in search_rows]
-                )
+                
 
             # 3. Merge and sort chronologically
             all_rows: dict[int, asyncpg.Record] = {r["id"]: r for r in recent_rows}
@@ -274,7 +256,7 @@ class ConversationManager:
             if isinstance(content, dict) and content.get("type") == "text":
                 content = content["text"]
 
-            period_end_local = row["period_end"].astimezone(user_tz)
+            period_end_local = row["period_end"].astimezone(ZoneInfo(user_tz))
             timestamp = period_end_local.strftime("%Y-%m-%d %H:%M %Z")
             header = f"[id={row['id']} time={timestamp}]"
 

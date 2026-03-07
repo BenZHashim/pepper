@@ -7,7 +7,6 @@ fastmcp>=2.0.0
 
 # AI
 anthropic>=0.25.0
-voyageai>=0.3.0
 
 # SMS
 twilio>=9.0.0
@@ -20,8 +19,12 @@ python-dateutil>=2.9.0
 # Scheduling
 apscheduler>=3.10.0
 
+# Google OAuth
+google-auth-oauthlib>=1.2.0
+google-auth-httplib2>=0.2.0
+google-api-python-client>=2.120.0
+
 # Utils
 python-dotenv>=1.0.0
 python-multipart>=0.0.9
 
-sentence-transformers>=2.3.0

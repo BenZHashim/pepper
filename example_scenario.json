@@ -1,0 +1,82 @@
+{
+  "_comment": "Simulates one week of realistic reminder conversations. start_datetime is optional — defaults to 30 days ago.",
+  "name": "One-Week Reminder History",
+  "topic": "setting reminders and managing daily tasks",
+  "start_datetime": "2026-01-01T09:00:00",
+  "phases": [
+    {
+      "label": "Day 1 — First contact, setting preferences",
+      "day_offset": 0,
+      "exchanges": [
+        {
+          "user": "I have a meeting with Sarah tomorrow at 2pm",
+          "assistant": "auto"
+        },
+        {
+          "user": "Generally I want reminders 15 minutes before events. Do that automatically.",
+          "assistant": "auto"
+        },
+        {
+          "user": "Also remind me to pick up groceries tonight at 6",
+          "assistant": "auto"
+        }
+      ]
+    },
+    {
+      "label": "Day 2 — Check-in and more reminders",
+      "day_offset": 1,
+      "exchanges": [
+        {
+          "user": "What reminders do I have today?",
+          "assistant": "auto"
+        },
+        {
+          "user": "auto",
+          "assistant": "auto"
+        }
+      ]
+    },
+    {
+      "label": "Day 4 — Mid-week tasks",
+      "day_offset": 3,
+      "exchanges": [
+        {
+          "user": "auto",
+          "assistant": "auto"
+        },
+        {
+          "user": "Can you remind me to call my dentist in 10 minutes",
+          "assistant": "auto"
+        },
+        {
+          "user": "auto",
+          "assistant": "auto"
+        }
+      ]
+    },
+    {
+      "label": "Day 6 — Weekend planning",
+      "day_offset": 5,
+      "exchanges": [
+        {
+          "user": "Hey, I have a birthday party on Sunday at 4pm. Set a reminder.",
+          "assistant": "auto"
+        },
+        {
+          "user": "auto",
+          "assistant": "auto"
+        }
+      ]
+    },
+    {
+      "label": "Day 7 — Look back",
+      "day_offset": 6,
+      "exchanges": [
+        {
+          "user": "What reminders have I set this week?",
+          "assistant": "auto"
+        }
+      ]
+    }
+  ]
+}
