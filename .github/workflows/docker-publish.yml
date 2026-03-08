@@ -66,3 +66,7 @@ jobs:
           tags: ghcr.io/${{ steps.owner.outputs.name }}/sms-ai-api:latest
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      # ── Trigger Dokploy deploy (runs after all images are pushed) ─────────
+      - name: Trigger Dokploy deployment
+        run: curl -s -X GET "${{ secrets.DOKPLOY_WEBHOOK_URL }}"

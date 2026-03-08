@@ -459,11 +459,11 @@ async def sms_webhook(
     logger.info(f"SMS from {sender}: {message_body}")
 
     # Allowlist check
-    if sender not in ALLOWED_PHONES:
-        logger.warning(f"Rejected message from unauthorized number: {sender}")
-        twiml = MessagingResponse()
-        twiml.message("Sorry, this assistant is private.")
-        return Response(content=str(twiml), media_type="application/xml")
+    #if sender not in ALLOWED_PHONES:
+    #    logger.warning(f"Rejected message from unauthorized number: {sender}")
+    #    twiml = MessagingResponse()
+    #    twiml.message("Sorry, this assistant is private.")
+    #    return Response(content=str(twiml), media_type="application/xml")
     
     # Look up or handle new user
     user = await get_or_create_user(sender)
