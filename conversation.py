@@ -60,7 +60,6 @@ class ConversationManager:
         self._pending_registration: dict[str, dict] = {}
 
     # ── Internal helpers ──────────────────────────────────────────────────────
-
     async def _get_user_id(self, conn: asyncpg.Connection, phone: str) -> Optional[int]:
         row = await conn.fetchrow("SELECT id FROM users WHERE phone = $1", phone)
         return row["id"] if row else None
