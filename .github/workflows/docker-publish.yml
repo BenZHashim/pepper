@@ -34,6 +34,17 @@ jobs:
         id: owner
         run: echo "name=$(echo '${{ github.repository_owner }}' | tr '[:upper:]' '[:lower:]')" >> $GITHUB_OUTPUT
 
+      # ── Embed image ──────────────────────────────────────────────────────
+      - name: Build and push Embed image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: Dockerfile.embed
+          push: true
+          tags: ghcr.io/${{ steps.owner.outputs.name }}/sms-ai-embed:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
       # ── MCP image ────────────────────────────────────────────────────────
       - name: Build and push MCP image
         uses: docker/build-push-action@v5

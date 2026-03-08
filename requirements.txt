@@ -24,8 +24,8 @@ google-auth-oauthlib>=1.2.0
 google-auth-httplib2>=0.2.0
 google-api-python-client>=2.120.0
 
-# Embeddings (in-process, no separate container needed)
-fastembed>=0.4.0
+# HTTP client (used by EmbeddingManager to call the embed microservice)
+httpx>=0.27.0
 
 # Utils
 python-dotenv>=1.0.0

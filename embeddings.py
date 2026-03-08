@@ -1,30 +1,31 @@
 """
-Embedding Manager — runs BAAI/bge-small-en-v1.5 in-process via fastembed.
+Embedding Manager — calls the shared embed microservice via HTTP.
 
-No separate container needed. The model is loaded once at startup and reused.
-fastembed uses ONNX Runtime, so memory footprint is ~150 MB vs ~600 MB for TEI.
+Only one ONNX Runtime instance runs (in the `embed` container), shared by
+both `api` and `mcp`. This keeps CPU and RAM usage on the host much lower
+than loading the model in-process in every container.
 """
 
-import asyncio
 import logging
+import os
 
-from fastembed import TextEmbedding
+import httpx
 
 logger = logging.getLogger(__name__)
 
-EMBEDDING_MODEL = "BAAI/bge-small-en-v1.5"
-EMBEDDING_DIM   = 384
+EMBEDDING_DIM = 384
+EMBED_URL     = os.getenv("EMBED_URL", "http://embed:8002")
 
 
 class EmbeddingManager:
     def __init__(self):
-        self._model = TextEmbedding(EMBEDDING_MODEL)
+        self._client = httpx.AsyncClient(base_url=EMBED_URL, timeout=10.0)
 
     async def embed(self, text: str) -> list[float]:
         """Return a normalised embedding vector for *text*."""
-        def _run():
-            return next(self._model.embed([text])).tolist()
-        return await asyncio.to_thread(_run)
+        response = await self._client.post("/embed", json={"text": text})
+        response.raise_for_status()
+        return response.json()
 
     async def close(self) -> None:
-        pass
+        await self._client.aclose()
