@@ -50,6 +50,9 @@ services:
     image: ghcr.io/${GITHUB_USERNAME}/sms-ai-api:latest
     container_name: sms_ai_api
     restart: unless-stopped
+    networks:
+      - default
+      - dokploy-network
     ports:
       - "5000:5000"
     environment:
@@ -80,3 +83,7 @@ services:
 
 volumes:
   postgres_data:
+
+networks:
+  dokploy-network:
+    external: true
