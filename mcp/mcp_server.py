@@ -48,7 +48,6 @@ async def health_check(request: Request) -> JSONResponse:
     return JSONResponse({"status": "ok"})
 
 # ─── Run ──────────────────────────────────────────────────────────────────────
-
 if __name__ == "__main__":
     logger.info(f"Starting FastMCP server on port {MCP_PORT}")
     mcp.run(transport="http", host="0.0.0.0", port=MCP_PORT)
