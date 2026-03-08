@@ -26,6 +26,7 @@ services:
   # ── FastMCP Server ────────────────────────────────────────────────────────
   mcp:
     image: ghcr.io/${GITHUB_USERNAME}/sms-ai-mcp:latest
+    pull_policy: always
     container_name: sms_ai_mcp
     restart: unless-stopped
     environment:
@@ -48,6 +49,7 @@ services:
   # ── FastAPI App ───────────────────────────────────────────────────────────
   api:
     image: ghcr.io/${GITHUB_USERNAME}/sms-ai-api:latest
+    pull_policy: always
     container_name: sms_ai_api
     restart: unless-stopped
     networks:
