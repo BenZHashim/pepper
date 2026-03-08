@@ -29,6 +29,11 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
+      # GHCR requires lowercase — BenZHashim → benzHashim → benzHashim... → all lower
+      - name: Lowercase owner
+        id: owner
+        run: echo "name=$(echo '${{ github.repository_owner }}' | tr '[:upper:]' '[:lower:]')" >> $GITHUB_OUTPUT
+
       # ── MCP image ────────────────────────────────────────────────────────
       - name: Build and push MCP image
         uses: docker/build-push-action@v5
@@ -36,7 +41,7 @@ jobs:
           context: .
           file: Dockerfile.mcp
           push: true
-          tags: ghcr.io/${{ github.repository_owner }}/sms-ai-mcp:latest
+          tags: ghcr.io/${{ steps.owner.outputs.name }}/sms-ai-mcp:latest
           cache-from: type=gha          # GitHub Actions cache — speeds up repeat builds
           cache-to: type=gha,mode=max
 
@@ -47,6 +52,6 @@ jobs:
           context: .
           file: Dockerfile.api
           push: true
-          tags: ghcr.io/${{ github.repository_owner }}/sms-ai-api:latest
+          tags: ghcr.io/${{ steps.owner.outputs.name }}/sms-ai-api:latest
           cache-from: type=gha
           cache-to: type=gha,mode=max
