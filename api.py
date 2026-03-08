@@ -62,6 +62,7 @@ DEV_MODE            = os.getenv("DEV_MODE", "TRUE") == "TRUE"  # Skip Twilio sig
 ALLOWED_PHONES = set(os.getenv("ALLOWED_PHONES", "").split(","))  # Comma-separated list of allowed phone numbers
 TIMEZONE           = os.getenv("TIMEZONE", "America/Los_Angeles")
 ADMIN_TOKEN        = os.getenv("ADMIN_TOKEN", "admin")
+WEBHOOK_BASE_URL   = os.getenv("WEBHOOK_BASE_URL", "").rstrip("/")  # e.g. https://abc123.devtunnels.ms
 
 SYSTEM_PROMPT = """You are a personal AI assistant named Pepper that is accessible via SMS.
 You have tools to manage reminders, save/search memories, read Gmail, and manage Google Calendar.
@@ -448,7 +449,8 @@ async def sms_webhook(
     else:
         form_data = await request.form()
         signature = request.headers.get("X-Twilio-Signature", "")
-        if not twilio_validator.validate(str(request.url), dict(form_data), signature):
+        url = f"{WEBHOOK_BASE_URL}/sms" if WEBHOOK_BASE_URL else str(request.url)
+        if not twilio_validator.validate(url, dict(form_data), signature):
             raise HTTPException(status_code=403, detail="Invalid Twilio signature")
 
     # Normalize sender — strip whatsapp: prefix if present
