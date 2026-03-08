@@ -1,0 +1,79 @@
+services:
+
+  # ── PostgreSQL + pgvector ─────────────────────────────────────────────────
+  db:
+    image: pgvector/pgvector:pg16
+    container_name: sms_ai_db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-smsai}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-smsai_secret}
+      POSTGRES_DB: ${POSTGRES_DB:-smsai}
+    ports:
+      - "127.0.0.1:5432:5432"   # localhost-only — access via SSH tunnel
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./init.sql:/docker-entrypoint-initdb.d/init.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-smsai} -d ${POSTGRES_DB:-smsai}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # ── FastMCP Server ────────────────────────────────────────────────────────
+  mcp:
+    image: ghcr.io/${GITHUB_USERNAME}/sms-ai-mcp:latest
+    container_name: sms_ai_mcp
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-smsai}:${POSTGRES_PASSWORD:-smsai_secret}@db:5432/${POSTGRES_DB:-smsai}
+      MCP_PORT: 8001
+      TIMEZONE: ${TIMEZONE:-America/New_York}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID}
+      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET}
+      GOOGLE_REDIRECT_URI: ${GOOGLE_REDIRECT_URI}
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -s --max-time 3 http://localhost:8001/health | grep ok || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ── FastAPI App ───────────────────────────────────────────────────────────
+  api:
+    image: ghcr.io/${GITHUB_USERNAME}/sms-ai-api:latest
+    container_name: sms_ai_api
+    restart: unless-stopped
+    ports:
+      - "5000:5000"
+    environment:
+      MCP_SERVER_URL: http://mcp:8001
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
+      TWILIO_ACCOUNT_SID: ${TWILIO_ACCOUNT_SID}
+      TWILIO_AUTH_TOKEN: ${TWILIO_AUTH_TOKEN}
+      TWILIO_PHONE_NUMBER: ${TWILIO_PHONE_NUMBER}
+      MY_PHONE_NUMBER: ${MY_PHONE_NUMBER}
+      ALLOWED_PHONES: ${ALLOWED_PHONES}
+      TIMEZONE: ${TIMEZONE:-America/New_York}
+      DATABASE_URL: postgresql://${POSTGRES_USER:-smsai}:${POSTGRES_PASSWORD:-smsai_secret}@db:5432/${POSTGRES_DB:-smsai}
+      USE_WHATSAPP: ${USE_WHATSAPP}
+      ADMIN_TOKEN: ${ADMIN_TOKEN:-admin}
+      DEV_MODE: ${DEV_MODE}
+      WEBHOOK_BASE_URL: ${WEBHOOK_BASE_URL}
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID}
+      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET}
+      GOOGLE_REDIRECT_URI: ${GOOGLE_REDIRECT_URI}
+    depends_on:
+      mcp:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  postgres_data:
