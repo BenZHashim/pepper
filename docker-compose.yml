@@ -2,7 +2,7 @@ services:
 
   # ── PostgreSQL + pgvector ─────────────────────────────────────────────────
   db:
-    image: pgvector/pgvector:pg16          # Official pgvector image, Postgres 16
+    image: pgvector/pgvector:pg16
     container_name: sms_ai_db
     restart: unless-stopped
     environment:
@@ -10,10 +10,10 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-smsai_secret}
       POSTGRES_DB: ${POSTGRES_DB:-smsai}
     ports:
-      - "5432:5432"                        # Expose to host for local DB tools (TablePlus, psql, etc.)
+      - "127.0.0.1:5432:5432"   # localhost-only — access via SSH tunnel
     volumes:
-      - postgres_data:/var/lib/postgresql/data   # Persist data between restarts
-      - ./init.sql:/docker-entrypoint-initdb.d/init.sql  # Run on first boot
+      - postgres_data:/var/lib/postgresql/data
+      - ./init.sql:/docker-entrypoint-initdb.d/init.sql
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-smsai} -d ${POSTGRES_DB:-smsai}"]
       interval: 5s
@@ -27,8 +27,6 @@ services:
       dockerfile: Dockerfile.mcp
     container_name: sms_ai_mcp
     restart: unless-stopped
-    ports:
-      - "8001:8001"
     environment:
       DATABASE_URL: postgresql://${POSTGRES_USER:-smsai}:${POSTGRES_PASSWORD:-smsai_secret}@db:5432/${POSTGRES_DB:-smsai}
       MCP_PORT: 8001
@@ -39,28 +37,12 @@ services:
       GOOGLE_REDIRECT_URI: ${GOOGLE_REDIRECT_URI}
     depends_on:
       db:
-        condition: service_healthy          # Wait for Postgres to be ready
+        condition: service_healthy
     healthcheck:
       test: ["CMD-SHELL", "curl -s --max-time 3 http://localhost:8001/health | grep ok || exit 1"]
       interval: 10s
       timeout: 5s
       retries: 5
-
-  # ── Text Embeddings Inference (TEI) ───────────────────────────────────────
-  embeddings:
-    image: ghcr.io/huggingface/text-embeddings-inference:cpu-latest
-    container_name: sms_ai_embeddings
-    restart: unless-stopped
-    command: --model-id BAAI/bge-small-en-v1.5
-    ports:
-      - "8002:80"                          # Expose to host for debugging
-    volumes:
-      - embeddings_cache:/data             # Cache model weights between restarts
-    healthcheck:
-      test: ["CMD-SHELL", "curl -sf http://localhost:80/health || exit 1"]
-      interval: 10s
-      timeout: 5s
-      retries: 10                          # Model download can take a moment on first boot
 
   # ── FastAPI App ───────────────────────────────────────────────────────────
   api:
@@ -72,8 +54,7 @@ services:
     ports:
       - "5000:5000"
     environment:
-      MCP_SERVER_URL: http://mcp:8001      # Internal Docker network URL
-      EMBEDDING_URL: http://embeddings:80  # TEI sidecar
+      MCP_SERVER_URL: http://mcp:8001
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
       TWILIO_ACCOUNT_SID: ${TWILIO_ACCOUNT_SID}
       TWILIO_AUTH_TOKEN: ${TWILIO_AUTH_TOKEN}
@@ -82,15 +63,14 @@ services:
       ALLOWED_PHONES: ${ALLOWED_PHONES}
       TIMEZONE: ${TIMEZONE:-America/New_York}
       DATABASE_URL: postgresql://${POSTGRES_USER:-smsai}:${POSTGRES_PASSWORD:-smsai_secret}@db:5432/${POSTGRES_DB:-smsai}
-      USE_WHATSAPP: ${USE_WHATSAPP:-False}
+      USE_WHATSAPP: ${USE_WHATSAPP:-false}
       ADMIN_TOKEN: ${ADMIN_TOKEN:-admin}
+      DEV_MODE: ${DEV_MODE:-FALSE}
       GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID}
       GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET}
       GOOGLE_REDIRECT_URI: ${GOOGLE_REDIRECT_URI}
     depends_on:
       mcp:
-        condition: service_healthy
-      embeddings:
         condition: service_healthy
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:5000/health"]
@@ -98,16 +78,5 @@ services:
       timeout: 5s
       retries: 5
 
-  adminer:
-    image: adminer
-    container_name: sms_ai_adminer
-    restart: unless-stopped
-    ports:
-      - "8080:8080"
-    depends_on:
-      db:
-        condition: service_healthy
-
 volumes:
-  postgres_data:                           # Named volume — survives container restarts
-  embeddings_cache:                        # Cache TEI model weights between restarts
+  postgres_data:

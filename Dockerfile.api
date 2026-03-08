@@ -4,12 +4,17 @@ WORKDIR /app
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
+    libgomp1 \
     && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY api.py conversation.py embeddings.py tools.py memory_utils.py summarization.py ./
+# Pre-download the embedding model so it's baked into the image
+# (avoids a runtime download on every fresh container start)
+RUN python -c "from fastembed import TextEmbedding; list(TextEmbedding('BAAI/bge-small-en-v1.5').embed(['warmup']))"
+
+COPY . .
 
 EXPOSE 5000
 

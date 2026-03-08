@@ -35,10 +35,11 @@ from mcp_shared import mcp, MCP_PORT
 # ─── Tool registration — import order doesn't matter ─────────────────────────
 # Each module calls @mcp.tool() at import time, registering onto the shared mcp.
 
-import tools_user       # noqa: F401  get_user, create_user, update_user, update_user_preferences*
-import tools_reminders  # noqa: F401  create_reminder, list_reminders, delete_reminder, get_due_reminders
-import tools_gmail      # noqa: F401  generate_gmail_auth_url
-import tools_memory     # noqa: F401  search_conversation_history, search_messages_by_time, get_source_messages
+import tools_user as tools_user       # noqa: F401  get_user, create_user, update_user, update_user_preferences*
+import tools_reminders as tools_reminders  # noqa: F401  create_reminder, list_reminders, update_reminder, delete_reminders, get_due_reminders
+import tools_google as tools_google    # noqa: F401  generate_google_auth_url, read_gmail, list/create/update/delete_calendar_event
+import tools_memory as tools_memory     # noqa: F401  search_conversation_history, search_messages_by_time, get_source_messages
+import tools_skills as tools_skills     # noqa: F401  get_skill_content, delete_skill
 
 # ─── Health check ─────────────────────────────────────────────────────────────
 

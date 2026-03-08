@@ -335,7 +335,7 @@ async def cmd_show(pool: asyncpg.Pool, phone: str, query: str, emb_url: str) -> 
             return
         await show_state(conn, user_id, f"State for {phone}")
         if query:
-            mgr = EmbeddingManager(url=emb_url)
+            mgr = EmbeddingManager()
             try:
                 await show_retrieval(conn, user_id, query, mgr)
             finally:

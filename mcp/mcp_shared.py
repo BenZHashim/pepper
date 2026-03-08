@@ -16,6 +16,7 @@ import anthropic
 from fastmcp import FastMCP
 from dotenv import load_dotenv
 from embeddings import EmbeddingManager
+from llm_client import create_message
 
 load_dotenv()
 
@@ -105,12 +106,16 @@ PREFERENCES_TEMPLATE = """\
 - (e.g. always ask before setting a recurring reminder, confirm before deleting anything)"""
 
 
-async def _merge_preferences(existing: str, instruction: str) -> str:
+async def _merge_preferences(existing: str, instruction: str, user_id: int | None = None) -> str:
     """
     Use Claude to merge a new instruction into the existing preferences prompt.
     Handles both additions and removals naturally based on the instruction.
     """
-    response = anthropic_client.messages.create(
+    pool = await get_pool()
+    response = await create_message(
+        anthropic_client, pool,
+        purpose="merge_preferences",
+        user_id=user_id,
         model="claude-haiku-4-5",
         max_tokens=650,
         messages=[{

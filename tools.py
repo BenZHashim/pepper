@@ -107,7 +107,7 @@ class ToolManager:
 
         async with self._pool.acquire() as conn:
             await register_vector(conn)
-
+            await conn.execute("TRUNCATE TABLE tools")  
             for tool in tools:
                 text      = f"{tool['name']} {tool['description']}"
                 embedding = await self._embeddings.embed(text)

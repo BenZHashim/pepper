@@ -153,10 +153,11 @@ async def update_user_preferences(instruction: str, phone: str = None) -> dict:
     conn = await get_conn_for_phone(phone)
     try:
         row = await conn.fetchrow(
-            "SELECT preferences_prompt FROM users WHERE phone = $1", phone
+            "SELECT id, preferences_prompt FROM users WHERE phone = $1", phone
         )
         existing = row["preferences_prompt"] if row else ""
-        updated  = await _merge_preferences(existing, instruction)
+        user_id  = row["id"] if row else None
+        updated  = await _merge_preferences(existing, instruction, user_id=user_id)
         await conn.execute(
             "UPDATE users SET preferences_prompt = $1 WHERE phone = $2",
             updated, phone

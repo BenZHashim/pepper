@@ -38,6 +38,7 @@ import asyncpg
 from pgvector.asyncpg import register_vector
 
 from embeddings import EmbeddingManager
+from llm_client import create_message
 from memory_utils import extract_text, retention_score
 
 logger = logging.getLogger(__name__)
@@ -313,12 +314,15 @@ class SummarizationManager:
         is_resummary = any(row["message_type"] == "summary" for row in candidates)
         prompt       = self._build_classification_prompt(block, is_resummary)
 
-        response = self._anthropic.messages.create(
-            model      = "claude-haiku-4-5",
-            max_tokens = 1024,
-            tools      = [_CLASSIFICATION_TOOL],
-            tool_choice = {"type": "tool", "name": "compress_window"},
-            messages   = [{"role": "user", "content": prompt}],
+        response = await create_message(
+            self._anthropic, self._pool,
+            purpose="summarization",
+            user_id=user_id,
+            model="claude-haiku-4-5",
+            max_tokens=1024,
+            tools=[_CLASSIFICATION_TOOL],
+            tool_choice={"type": "tool", "name": "compress_window"},
+            messages=[{"role": "user", "content": prompt}],
         )
 
         result: Optional[dict] = None

@@ -5,13 +5,20 @@ WORKDIR /app
 # Install system deps
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
+    libgomp1 \
     && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY mcp_server.py mcp_shared.py embeddings.py memory_utils.py ./
-COPY tools_user.py tools_reminders.py tools_gmail.py tools_memory.py ./
+# Pre-download the embedding model so it's baked into the image
+RUN python -c "from fastembed import TextEmbedding; list(TextEmbedding('BAAI/bge-small-en-v1.5').embed(['warmup']))"
+
+COPY . .
+
+# mcp/ files import root-level utils (embeddings.py, llm_client.py, etc.)
+ENV PYTHONPATH=/app
+WORKDIR /app/mcp
 
 EXPOSE 8001
 

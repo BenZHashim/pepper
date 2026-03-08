@@ -7,14 +7,13 @@ Run with:
     uvicorn main:app --reload --port 5000
 """
 
-from email import message
+import asyncio
 import os
 import json
 import logging
 from contextlib import asynccontextmanager
 from datetime import datetime
 import re
-from zoneinfo import ZoneInfo
 from zoneinfo import ZoneInfo
 
 import anthropic
@@ -34,6 +33,8 @@ from conversation import ConversationManager
 from embeddings import EmbeddingManager
 from summarization import SummarizationManager
 from tools import ToolManager
+from skills_agent import SkillsAgent
+from llm_client import create_message
 
 load_dotenv()
 
@@ -62,12 +63,13 @@ ALLOWED_PHONES = set(os.getenv("ALLOWED_PHONES", "").split(","))  # Comma-separa
 TIMEZONE           = os.getenv("TIMEZONE", "America/Los_Angeles")
 ADMIN_TOKEN        = os.getenv("ADMIN_TOKEN", "admin")
 
-SYSTEM_PROMPT = """You are a personal AI assistant named Pepper that is accessible via SMS. 
-You have tools to manage reminders, save/search memories and search gmail.
+SYSTEM_PROMPT = """You are a personal AI assistant named Pepper that is accessible via SMS.
+You have tools to manage reminders, save/search memories, read Gmail, and manage Google Calendar.
 
 User Preferences:
 {preferences_prompt}
 
+{skills_context}
 System Guidelines:
 - Keep responses concise — this is SMS, aim for under 300 characters when possible
 - If this is the user's first message and they seem new, greet them warmly and offer help.
@@ -76,8 +78,10 @@ System Guidelines:
 - Today's date and time: {now}
 - When setting reminders confirm the time back to the user in their local time.
 - If you're unsure about a time/date, ask for clarification before creating the reminder.
-- When using conversation history tools, use the results as internal context only. 
+- Calendar: When creating events, pass start/end times in the user's local time (not UTC) — the tool handles timezone conversion automatically. Always resolve relative dates (e.g. "next Tuesday", "this Friday") to exact dates using {now} before calling any calendar tool. Always confirm the event title, date, and time with the user before creating it.
+- When using conversation history tools, use the results as internal context only.
 - Do not include message IDs, roles, or timestamps in your response unless the user specifically asks for them. Present the information naturally.
+- When a skill listed above is relevant to the current request, call get_skill_content to read the full preference before acting.
 """
 
 # ─── Clients ──────────────────────────────────────────────────────────────────
@@ -111,6 +115,36 @@ async def get_db_pool() -> asyncpg.Pool:
 
 def _strip_context(message: str) -> str:
     return re.sub(r'^\[.*?\]\s*', '', message)
+
+
+async def _get_user_skills(phone: str) -> list[dict]:
+    """Return raw list of {name, description} for the user's skills."""
+    pool = await get_db_pool()
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(
+            """
+            SELECT s.name, s.description
+            FROM skills s
+            JOIN users u ON u.id = s.user_id
+            WHERE u.phone = $1
+            ORDER BY s.name
+            """,
+            phone,
+        )
+    return [{"name": r["name"], "description": r["description"]} for r in rows]
+
+
+def _format_skills_context(skills: list[dict]) -> str:
+    """Format skills list as a system prompt section, or empty string if none."""
+    if not skills:
+        return ""
+    lines = ["## Your Personalized Skills", ""]
+    for s in skills:
+        lines.append(f"- **{s['name']}**: {s['description']}")
+    lines.append("")
+    return "\n".join(lines)
+
+
 # ─── Registration Helpers ─────────────────────────────────────────────────────
 
 _REGISTRATION_TOOL = {
@@ -137,7 +171,11 @@ async def _extract_registration_fields(message: str) -> dict:
     Use Claude to extract name and/or timezone from a free-form message.
     Enforces schema via tool use — always returns {name, timezone}.
     """
-    response = anthropic_client.messages.create(
+    pool = await get_db_pool()
+    response = await create_message(
+        anthropic_client, pool,
+        purpose="registration",
+        user_id=None,
         model="claude-haiku-4-5",
         max_tokens=100,
         tools=[_REGISTRATION_TOOL],
@@ -220,13 +258,14 @@ async def _handle_registration(sender: str, message_body: str) -> Response:
 
 # ─── Agentic Loop ─────────────────────────────────────────────────────────────
 
-def _get_user_system_prompt(user: dict) -> str:
-    """Fill the system prompt template with user-specific info."""
+def _get_user_system_prompt(user: dict, skills: list[dict]) -> str:
+    """Fill the system prompt template with user-specific info and skills context."""
     return SYSTEM_PROMPT.format(
         preferences_prompt=user.get("preferences_prompt", "You are a helpful personal AI assistant."),
         name=user.get("name", "there"),
         timezone=user.get("timezone"),
         now=datetime.now(ZoneInfo(user.get("timezone"))).strftime("%A, %B %d %Y at %I:%M %p %Z"),
+        skills_context=_format_skills_context(skills),
     )
 
 async def run_agent(phone: str, user_message: str, user: dict) -> str:
@@ -238,25 +277,21 @@ async def run_agent(phone: str, user_message: str, user: dict) -> str:
     await conversation_manager.add_message(phone, "user", user_message)
     messages = await conversation_manager.get_history(phone, user_message)
 
-    system = _get_user_system_prompt(user)
+    skills = await _get_user_skills(phone)
+    system = _get_user_system_prompt(user, skills)
+    pool   = await get_db_pool()
 
     for _ in range(5):
-        token_count = anthropic_client.messages.count_tokens(
-            model="claude-haiku-4-5",
-            system=system,
-            tools=tools,
-            messages=messages,
-        )
-        logger.info(f"Input tokens: {token_count.input_tokens}")
-
-        response = anthropic_client.messages.create(
+        response = await create_message(
+            anthropic_client, pool,
+            purpose="main_agent",
+            user_id=user.get("id"),
             model="claude-haiku-4-5",
             max_tokens=500,
             system=system,
             tools=tools,
             messages=messages,
         )
-        logger.info(f"Output tokens: {response.usage.output_tokens}")
 
         text_content = ""
         tool_uses = []
@@ -273,6 +308,7 @@ async def run_agent(phone: str, user_message: str, user: dict) -> str:
                 text_content = "Done!"
             text_content = _strip_context(text_content)
             await conversation_manager.add_message(phone, "assistant", text_content)
+            asyncio.create_task(skills_agent.run(phone, user_message, skills))
             return text_content
 
         messages.append({"role": "assistant", "content": response.content})
@@ -341,9 +377,14 @@ async def fire_due_reminders():
 
 async def personalize_reminder(raw_message: str, user: dict) -> str:
     """Run a reminder message through Claude to make it feel natural and personalized."""
-    system = _get_user_system_prompt(user)
+    skills = await _get_user_skills(user.get("phone", ""))
+    system = _get_user_system_prompt(user, skills)
+    pool   = await get_db_pool()
 
-    response = anthropic_client.messages.create(
+    response = await create_message(
+        anthropic_client, pool,
+        purpose="personalize_reminder",
+        user_id=user.get("id"),
         model="claude-haiku-4-5",
         max_tokens=200,
         system=system,
@@ -371,11 +412,12 @@ scheduler = AsyncIOScheduler()
 async def lifespan(app: FastAPI):
     pool = await get_db_pool()
 
-    global embedding_manager, conversation_manager, tool_manager, summarization_manager
+    global embedding_manager, conversation_manager, tool_manager, summarization_manager, skills_agent
     embedding_manager    = EmbeddingManager()
     conversation_manager = ConversationManager(pool, embedding_manager)
     summarization_manager = SummarizationManager(pool, embedding_manager, anthropic_client)
     tool_manager         = ToolManager(pool, embedding_manager, get_mcp_url())
+    skills_agent         = SkillsAgent(pool, anthropic_client)
 
     await tool_manager.sync()
 
@@ -563,8 +605,8 @@ async def embed_all_messages(
         logger.info(f"Embedding run complete — embedded={embedded}, skipped={skipped}, errors={errors}")
         return {"embedded": embedded, "skipped": skipped, "errors": errors}
 
-@app.get("/auth/gmail/callback")
-async def gmail_callback(code: str, state: str):
+@app.get("/auth/google/callback")
+async def google_callback(code: str, state: str):
     """
     Google OAuth2 redirect target.
     `state` is a base64url-encoded JSON payload containing the user's phone
@@ -603,8 +645,8 @@ async def gmail_callback(code: str, state: str):
     )
 
     if not token_resp.ok:
-        logger.error(f"Gmail token exchange failed: {token_resp.text}")
-        return PlainTextResponse("Failed to connect Gmail. Please try again.", status_code=500)
+        logger.error(f"Google token exchange failed: {token_resp.text}")
+        return PlainTextResponse("Failed to connect Google account. Please try again.", status_code=500)
 
     token_data = token_resp.json()
     tokens = {
@@ -619,13 +661,13 @@ async def gmail_callback(code: str, state: str):
     pool  = await get_db_pool()
     async with pool.acquire() as conn:
         await conn.execute(
-            "UPDATE users SET gmail_tokens = $1 WHERE phone = $2",
+            "UPDATE users SET google_tokens = $1 WHERE phone = $2",
             json.dumps(tokens),
             phone,
         )
 
-    message = "Your Gmail is now connected! You can ask me to check your emails."
-    conversation_manager.add_message(phone, "assistant", message)
+    message = "Your Google account is now connected! You can ask me to check your emails or manage your calendar."
+    await conversation_manager.add_message(phone, "assistant", message)
 
     try:
         use_whatsapp = os.getenv("USE_WHATSAPP", "false").lower() == "true"

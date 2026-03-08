@@ -114,33 +114,119 @@ async def list_reminders(phone: str = None, include_fired: bool = False) -> list
 
 
 @mcp.tool()
-async def delete_reminder(reminder_id: int, phone: str = None) -> dict:
+async def delete_reminders(reminder_ids: list[int], phone: str = None) -> dict:
     """
-    Remove a reminder permanently.
-    Use when the user wants to cancel, delete, or remove a reminder.
-    Phrases like 'cancel that reminder', 'delete it', 'never mind about that',
-    'I don't need that anymore', or 'remove the reminder about X'.
-    Always call list_reminders first to find the correct reminder ID.
+    Remove one or more reminders permanently.
+    Use when the user wants to cancel, delete, or remove reminders.
+    Phrases like 'cancel that reminder', 'delete them all', 'never mind about those',
+    'I don't need that anymore', 'clear all my reminders', or 'remove the reminder about X'.
+    Always call list_reminders first to find the correct reminder IDs.
     Args:
-        reminder_id: The reminder ID to delete.
+        reminder_ids: List of reminder IDs to delete. Pass a single-element list to delete one.
     """
+    if not reminder_ids:
+        return {"success": False, "error": "No reminder IDs provided."}
+
     conn = await get_conn_for_phone(phone)
     try:
         result = await conn.execute(
             """
             DELETE FROM reminders
-            WHERE id = $1
+            WHERE id = ANY($1::int[])
             AND user_id = (SELECT id FROM users WHERE phone = $2)
             """,
-            reminder_id, phone,
+            reminder_ids, phone,
         )
     finally:
         await release_conn(conn)
 
     deleted = int(result.split()[-1])
-    if deleted == 0:
-        return {"success": False, "error": f"No reminder found with id {reminder_id} for this user."}
-    return {"success": True, "deleted_id": reminder_id}
+    not_found = len(reminder_ids) - deleted
+    return {
+        "success": True,
+        "deleted_count": deleted,
+        "deleted_ids": reminder_ids if not_found == 0 else None,
+        **({"not_found_count": not_found} if not_found > 0 else {}),
+    }
+
+
+@mcp.tool()
+async def update_reminder(
+    reminder_id: int,
+    phone: str = None,
+    message: str = None,
+    remind_at: str = None,
+    recurrence: str = None,
+) -> dict:
+    """
+    Change the time, message, or recurrence of an existing reminder.
+    Use when the user wants to reschedule, rename, or modify a reminder.
+    Phrases like 'change that reminder to 5pm', 'move my reminder to tomorrow',
+    'update the reminder to say X', 'make it weekly instead'.
+    Always call list_reminders first to find the correct reminder ID.
+    Args:
+        reminder_id: ID of the reminder to update.
+        message:     New reminder message (omit to keep existing).
+        remind_at:   New ISO 8601 datetime e.g. '2025-03-10T09:00:00' (omit to keep existing).
+        recurrence:  New recurrence: 'daily', 'weekly', 'monthly', or None to make it one-time.
+                     Pass the string 'none' to explicitly clear recurrence.
+    """
+    fields = []
+    values = []
+
+    if message is not None:
+        fields.append(f"message = ${len(values) + 1}")
+        values.append(message)
+
+    if remind_at is not None:
+        try:
+            dt = datetime.fromisoformat(remind_at)
+        except ValueError:
+            return {"success": False, "error": f"Invalid datetime: {remind_at}. Use ISO 8601 format."}
+        user_tz = await get_user_timezone(phone)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=ZoneInfo(user_tz))
+        dt_utc = dt.astimezone(timezone.utc)
+        fields.append(f"remind_at = ${len(values) + 1}")
+        values.append(dt_utc)
+
+    if recurrence is not None:
+        new_recurrence = None if recurrence.lower() == "none" else recurrence
+        fields.append(f"recurrence = ${len(values) + 1}")
+        values.append(new_recurrence)
+
+    if not fields:
+        return {"success": False, "error": "No fields to update."}
+
+    # Add reminder_id and phone for the WHERE clause
+    values.extend([reminder_id, phone])
+    id_param = len(values) - 1
+    phone_param = len(values)
+
+    conn = await get_conn_for_phone(phone)
+    try:
+        row = await conn.fetchrow(
+            f"""
+            UPDATE reminders SET {', '.join(fields)}
+            WHERE id = ${id_param}
+              AND user_id = (SELECT id FROM users WHERE phone = ${phone_param})
+            RETURNING id, message, remind_at, recurrence
+            """,
+            *values,
+        )
+    finally:
+        await release_conn(conn)
+
+    if not row:
+        return {"success": False, "error": f"Reminder {reminder_id} not found."}
+
+    return {
+        "success": True,
+        "id": row["id"],
+        "message": row["message"],
+        "remind_at": row["remind_at"].isoformat(),
+        "recurrence": row["recurrence"],
+    }
 
 
 @mcp.tool()

@@ -30,7 +30,7 @@ CREATE TABLE IF NOT EXISTS users (
     phone               TEXT        NOT NULL UNIQUE,
     preferences_prompt  TEXT        NOT NULL DEFAULT 'You are a helpful personal AI assistant.',
     timezone            TEXT,
-    gmail_tokens        JSONB,
+    google_tokens       JSONB,
     created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
@@ -113,6 +113,37 @@ CREATE INDEX IF NOT EXISTS messages_embedding_idx
 CREATE INDEX IF NOT EXISTS messages_search_vector_idx
     ON messages USING gin (search_vector);
 
+-- ── LLM Usage ────────────────────────────────────────────────────────────────
+
+CREATE TABLE IF NOT EXISTS llm_usage (
+    id            SERIAL      PRIMARY KEY,
+    user_id       INTEGER     REFERENCES users(id) ON DELETE SET NULL,
+    model         TEXT        NOT NULL,
+    purpose       TEXT        NOT NULL,
+    input_tokens  INTEGER     NOT NULL,
+    output_tokens INTEGER     NOT NULL,
+    cost_usd      NUMERIC(10, 6) NOT NULL,
+    created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_llm_usage_user_id    ON llm_usage (user_id);
+CREATE INDEX IF NOT EXISTS idx_llm_usage_created_at ON llm_usage (created_at);
+
+-- ── Skills ────────────────────────────────────────────────────────────────────
+
+CREATE TABLE IF NOT EXISTS skills (
+    id          SERIAL      PRIMARY KEY,
+    user_id     INTEGER     NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    name        TEXT        NOT NULL,
+    description TEXT        NOT NULL,
+    content     TEXT        NOT NULL,   -- Markdown formatted
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE(user_id, name)
+);
+
+CREATE INDEX IF NOT EXISTS idx_skills_user_id ON skills (user_id);
+
 -- ── Row Level Security ────────────────────────────────────────────────────────
 
 ALTER TABLE users ENABLE ROW LEVEL SECURITY;
@@ -135,6 +166,17 @@ CREATE POLICY reminders_user_isolation ON reminders
 ALTER TABLE messages ENABLE ROW LEVEL SECURITY;
 
 CREATE POLICY messages_user_isolation ON messages
+    FOR ALL TO smsai
+    USING (
+        user_id = (
+            SELECT id FROM users
+            WHERE phone = current_setting('app.current_phone', TRUE)
+        )
+    );
+
+ALTER TABLE skills ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY skills_user_isolation ON skills
     FOR ALL TO smsai
     USING (
         user_id = (

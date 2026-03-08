@@ -1,0 +1,14 @@
+.git
+.venv
+__pycache__
+*.pyc
+*.log
+.env
+old.py
+token.pickle
+credentials.json
+mcp/
+simulate.py
+auth.py
+test.ps1
+example_scenario.json
