@@ -20,8 +20,19 @@ services:
       timeout: 5s
       retries: 5
 
-  # ── TEMP: embed service disabled for Twilio debugging ─────────────────────
-  # Restore this block (and the embed depends_on below) once Twilio is confirmed working
+  # ── Embedding Microservice ────────────────────────────────────────────────
+  embed:
+    image: ghcr.io/${GITHUB_USERNAME}/sms-ai-embed:latest
+    pull_policy: always
+    container_name: sms_ai_embed
+    restart: unless-stopped
+    environment:
+      OMP_NUM_THREADS: "1"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -s --max-time 3 http://localhost:8002/health | grep ok || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
   # ── FastMCP Server ────────────────────────────────────────────────────────
   mcp:
@@ -34,11 +45,14 @@ services:
       MCP_PORT: 8001
       TIMEZONE: ${TIMEZONE:-America/New_York}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
+      EMBED_URL: http://embed:8002
       GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID}
       GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET}
       GOOGLE_REDIRECT_URI: ${GOOGLE_REDIRECT_URI}
     depends_on:
       db:
+        condition: service_healthy
+      embed:
         condition: service_healthy
     healthcheck:
       test: ["CMD-SHELL", "curl -s --max-time 3 http://localhost:8001/health | grep ok || exit 1"]
