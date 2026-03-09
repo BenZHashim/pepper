@@ -14,7 +14,7 @@ import hashlib
 import secrets
 import asyncio
 import urllib.parse
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from zoneinfo import ZoneInfo
 
 from mcp_shared import mcp, get_conn_for_phone, release_conn, TIMEZONE as SERVER_TIMEZONE
@@ -338,22 +338,30 @@ async def create_calendar_event(
     timezone: str = None,
     reminder_minutes: list[int] = [],
     reminder_method: str = "popup",
+    sms_reminder_minutes: list[int] = [],
 ) -> str:
     """
     Create a new event on the user's Google Calendar.
     Call generate_google_auth_url first if this returns 'google_not_connected'.
 
     Args:
-        title:            Event title/summary.
-        start_datetime:   ISO 8601 datetime string in the user's local time
-                          (e.g. '2026-03-10T14:00:00'). Do NOT convert to UTC.
-        end_datetime:     ISO 8601 datetime string in the user's local time.
-        description:      Optional event description.
-        timezone:         IANA timezone (e.g. 'America/New_York'). Omit to use
-                          the user's stored timezone automatically.
-        reminder_minutes: List of minutes before event to send a reminder (e.g. [10, 60]).
-                          If empty, the calendar's default reminder is used.
-        reminder_method:  'popup' for on-screen notification or 'email' for email reminder.
+        title:                Event title/summary.
+        start_datetime:       ISO 8601 datetime string in the user's local time
+                              (e.g. '2026-03-10T14:00:00'). Do NOT convert to UTC.
+        end_datetime:         ISO 8601 datetime string in the user's local time.
+        description:          Optional event description.
+        timezone:             IANA timezone (e.g. 'America/New_York'). Omit to use
+                              the user's stored timezone automatically.
+        reminder_minutes:     List of minutes before event for Google Calendar popup/email
+                              reminders (e.g. [10, 60]). These only appear inside the
+                              Google Calendar app — they do NOT send SMS messages.
+                              If empty, the calendar's default reminder is used.
+        reminder_method:      'popup' for on-screen notification or 'email' for email reminder.
+        sms_reminder_minutes: List of minutes before event to send an SMS reminder via this
+                              app (e.g. [15] for 15 min before, [480, 15] for 8 hrs before
+                              AND 15 min before). Use this whenever the user says 'remind me'
+                              or wants a text message reminder — this is separate from Google
+                              Calendar's own reminders.
     """
     from googleapiclient.discovery import build
     from googleapiclient.errors import HttpError
@@ -388,16 +396,62 @@ async def create_calendar_event(
     def _create():
         service = build("calendar", "v3", credentials=creds)
         created = service.events().insert(calendarId="primary", body=event_body).execute()
-        return created.get("htmlLink", "")
+        return created.get("htmlLink", ""), created.get("id", "")
 
     try:
-        link = await asyncio.to_thread(_create)
+        link, google_event_id = await asyncio.to_thread(_create)
     except HttpError as e:
         if e.resp.status in (401, 403):
             return "google_not_connected"
         return f"Calendar API error: {e}"
 
-    return f"Event created: {link}"
+    result = f"Event created: {link}"
+
+    # Always mirror Google Calendar reminders as SMS reminders — union both lists
+    # so no Google reminder goes unmatched by an SMS reminder.
+    # SMS fires SMS_LEAD_MINS earlier than the matching Google Calendar popup so
+    # the text arrives before the on-screen notification.
+    SMS_LEAD_MINS = 2
+    all_sms_minutes = list(set(list(sms_reminder_minutes) + list(reminder_minutes)))
+
+    # Create SMS reminders
+    if all_sms_minutes:
+        try:
+            start_dt = datetime.fromisoformat(start_datetime)
+            if start_dt.tzinfo is None:
+                start_dt = start_dt.replace(tzinfo=ZoneInfo(timezone))
+
+            conn = await get_conn_for_phone(phone)
+            try:
+                user = await conn.fetchrow("SELECT id FROM users WHERE phone = $1", phone)
+                if user:
+                    scheduled = 0
+                    for mins in all_sms_minutes:
+                        remind_dt_utc = (
+                            start_dt - timedelta(minutes=mins + SMS_LEAD_MINS)
+                        ).astimezone(ZoneInfo("UTC"))
+                        sms_message = f"Reminder: {title}"
+                        # Skip if an identical reminder already exists (prevents duplicates
+                        # if the tool is called more than once for the same event)
+                        existing = await conn.fetchval(
+                            "SELECT id FROM reminders WHERE user_id = $1 AND google_event_id = $2 AND remind_at = $3",
+                            user["id"], google_event_id, remind_dt_utc,
+                        )
+                        if not existing:
+                            await conn.execute(
+                                """INSERT INTO reminders (user_id, message, remind_at, google_event_id)
+                                   VALUES ($1, $2, $3, $4)""",
+                                user["id"], sms_message, remind_dt_utc, google_event_id or None,
+                            )
+                            scheduled += 1
+                    if scheduled:
+                        result += f"\n{scheduled} SMS reminder(s) scheduled."
+            finally:
+                await release_conn(conn)
+        except Exception as e:
+            result += f"\nWarning: could not schedule SMS reminders: {e}"
+
+    return result
 
 
 @mcp.tool()
@@ -437,8 +491,12 @@ async def update_calendar_event(
     def _update():
         service = build("calendar", "v3", credentials=creds)
 
-        # Fetch current event so we only patch what changed
+        # Fetch current event so we only patch what changed and can capture old start
         existing = service.events().get(calendarId="primary", eventId=event_id).execute()
+        old_start_str = (
+            existing.get("start", {}).get("dateTime")
+            or existing.get("start", {}).get("date")
+        )
 
         patch = {}
         if title is not None:
@@ -459,10 +517,10 @@ async def update_calendar_event(
         updated = service.events().patch(
             calendarId="primary", eventId=event_id, body=patch
         ).execute()
-        return updated.get("htmlLink", "")
+        return updated.get("htmlLink", ""), old_start_str
 
     try:
-        link = await asyncio.to_thread(_update)
+        link, old_start_str = await asyncio.to_thread(_update)
     except HttpError as e:
         if e.resp.status in (401, 403):
             return "google_not_connected"
@@ -470,7 +528,45 @@ async def update_calendar_event(
             return f"Event {event_id} not found."
         return f"Calendar API error: {e}"
 
-    return f"Event updated: {link}"
+    result = f"Event updated: {link}"
+
+    # If the event start moved, shift all linked SMS reminders by the same delta
+    if start_datetime is not None and old_start_str:
+        try:
+            old_start_dt = datetime.fromisoformat(old_start_str.replace("Z", "+00:00"))
+            new_start_dt = datetime.fromisoformat(start_datetime)
+            if new_start_dt.tzinfo is None:
+                new_start_dt = new_start_dt.replace(tzinfo=ZoneInfo(timezone))
+            old_start_utc = old_start_dt.astimezone(ZoneInfo("UTC"))
+            new_start_utc = new_start_dt.astimezone(ZoneInfo("UTC"))
+
+            conn = await get_conn_for_phone(phone)
+            try:
+                user = await conn.fetchrow("SELECT id FROM users WHERE phone = $1", phone)
+                if user:
+                    linked = await conn.fetch(
+                        """SELECT id, remind_at FROM reminders
+                           WHERE user_id = $1 AND google_event_id = $2 AND fired = FALSE""",
+                        user["id"], event_id,
+                    )
+                    shifted = 0
+                    for reminder in linked:
+                        # Preserve the exact offset each reminder had from the old start
+                        offset = old_start_utc - reminder["remind_at"].replace(tzinfo=ZoneInfo("UTC"))
+                        new_remind_at = new_start_utc - offset
+                        await conn.execute(
+                            "UPDATE reminders SET remind_at = $1 WHERE id = $2",
+                            new_remind_at, reminder["id"],
+                        )
+                        shifted += 1
+                    if shifted:
+                        result += f"\n{shifted} SMS reminder(s) rescheduled."
+            finally:
+                await release_conn(conn)
+        except Exception as e:
+            result += f"\nWarning: could not reschedule SMS reminders: {e}"
+
+    return result
 
 
 @mcp.tool()

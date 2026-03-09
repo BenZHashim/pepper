@@ -39,13 +39,14 @@ CREATE INDEX IF NOT EXISTS idx_users_phone ON users (phone);
 -- ── Reminders ────────────────────────────────────────────────────────────────
 
 CREATE TABLE IF NOT EXISTS reminders (
-    id          SERIAL      PRIMARY KEY,
-    user_id     INTEGER     NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    message     TEXT        NOT NULL,
-    remind_at   TIMESTAMPTZ NOT NULL,
-    recurrence  TEXT        CHECK (recurrence IN ('daily', 'weekly', 'monthly')),
-    fired       BOOLEAN     NOT NULL DEFAULT FALSE,
-    created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    id               SERIAL      PRIMARY KEY,
+    user_id          INTEGER     NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    message          TEXT        NOT NULL,
+    remind_at        TIMESTAMPTZ NOT NULL,
+    recurrence       TEXT        CHECK (recurrence IN ('daily', 'weekly', 'monthly')),
+    fired            BOOLEAN     NOT NULL DEFAULT FALSE,
+    google_event_id  TEXT,                        -- links reminder to a Google Calendar event
+    created_at       TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
 CREATE INDEX IF NOT EXISTS idx_reminders_remind_at
@@ -54,6 +55,10 @@ CREATE INDEX IF NOT EXISTS idx_reminders_remind_at
 
 CREATE INDEX IF NOT EXISTS idx_reminders_user_id
     ON reminders (user_id);
+
+CREATE INDEX IF NOT EXISTS idx_reminders_google_event_id
+    ON reminders (google_event_id)
+    WHERE google_event_id IS NOT NULL;
 
 -- ── Messages (Conversation History) ──────────────────────────────────────────
 
