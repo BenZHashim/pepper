@@ -24,7 +24,7 @@ logger = logging.getLogger(__name__)
 
 # Maximum tools to pass to Claude when filtering by relevance.
 # Set to None to return all tools (disables filtering).
-TOP_K_TOOLS = 10
+TOP_K_TOOLS = None
 
 # Blend weights — same pattern as ConversationManager.
 # W_RECENCY is intentionally absent; tools don't have an age dimension.
