@@ -27,8 +27,8 @@ from typing import Optional
 import asyncpg
 from pgvector.asyncpg import register_vector
 
-from embeddings import EmbeddingManager
-from memory_utils import extract_text, to_tsquery, run_hybrid_search
+from .embeddings import EmbeddingManager
+from .memory_utils import extract_text, to_tsquery, run_hybrid_search
 
 logger = logging.getLogger(__name__)
 

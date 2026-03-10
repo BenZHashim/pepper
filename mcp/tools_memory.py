@@ -11,7 +11,7 @@ from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 
 from pgvector.asyncpg import register_vector
-from memory_utils import run_hybrid_search, increment_retrieval_counts
+from services.memory_utils import run_hybrid_search, increment_retrieval_counts
 
 from mcp_shared import (
     mcp,

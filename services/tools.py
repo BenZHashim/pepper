@@ -15,8 +15,8 @@ from typing import Optional
 import asyncpg
 from fastmcp import Client as MCPClient
 from pgvector.asyncpg import register_vector
-from memory_utils import to_tsquery
-from embeddings import EmbeddingManager
+from .memory_utils import to_tsquery
+from .embeddings import EmbeddingManager
 
 logger = logging.getLogger(__name__)
 

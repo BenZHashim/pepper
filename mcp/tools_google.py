@@ -430,7 +430,7 @@ async def create_calendar_event(
                         remind_dt_utc = (
                             start_dt - timedelta(minutes=mins + SMS_LEAD_MINS)
                         ).astimezone(ZoneInfo("UTC"))
-                        sms_message = f"Reminder: {title}"
+                        sms_message = title
                         # Skip if an identical reminder already exists (prevents duplicates
                         # if the tool is called more than once for the same event)
                         existing = await conn.fetchval(

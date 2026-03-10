@@ -16,7 +16,7 @@ import logging
 import anthropic
 import asyncpg
 
-from llm_client import create_message
+from .llm_client import create_message
 
 logger = logging.getLogger(__name__)
 

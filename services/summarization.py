@@ -37,9 +37,9 @@ import anthropic
 import asyncpg
 from pgvector.asyncpg import register_vector
 
-from embeddings import EmbeddingManager
-from llm_client import create_message
-from memory_utils import extract_text, retention_score
+from .embeddings import EmbeddingManager
+from .llm_client import create_message
+from .memory_utils import extract_text, retention_score
 
 logger = logging.getLogger(__name__)
 

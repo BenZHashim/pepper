@@ -15,8 +15,8 @@ import asyncpg
 import anthropic
 from fastmcp import FastMCP
 from dotenv import load_dotenv
-from embeddings import EmbeddingManager
-from llm_client import create_message
+from services.embeddings import EmbeddingManager
+from services.llm_client import create_message
 
 load_dotenv()
 

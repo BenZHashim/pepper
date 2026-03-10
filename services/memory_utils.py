@@ -10,7 +10,7 @@ from datetime import datetime, timezone
 from typing import Optional
 import asyncpg
 
-from embeddings import EmbeddingManager
+from .embeddings import EmbeddingManager
 
 
 # ── Scoring ───────────────────────────────────────────────────────────────────

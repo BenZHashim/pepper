@@ -79,11 +79,11 @@ from dotenv import load_dotenv
 from pgvector.asyncpg import register_vector
 
 sys.path.insert(0, os.path.dirname(__file__))
-from memory_utils import (
+from services.memory_utils import (
     extract_text, retention_score, run_hybrid_search,
     RETENTION_BOOST, RETENTION_HALF_LIFE_DAYS,
 )
-from embeddings import EmbeddingManager
+from services.embeddings import EmbeddingManager
 
 load_dotenv()
 
