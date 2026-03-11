@@ -25,6 +25,7 @@ from mcp_shared import (
     SEMANTIC_K,
     CANDIDATE_MULTIPLIER,
 )
+from models import UserRepository, Message
 
 
 @mcp.tool()
@@ -52,10 +53,8 @@ async def search_conversation_history(
     try:
         await register_vector(conn)
 
-        user_id = await conn.fetchval(
-            "SELECT id FROM users WHERE phone = $1", phone
-        )
-        if user_id is None:
+        user = await UserRepository(conn).get_by_phone(phone)
+        if user is None:
             return f"No user found for phone {phone}"
 
         exclude_ids = already_in_context or [0]
@@ -64,7 +63,7 @@ async def search_conversation_history(
             conn=conn,
             embedding_manager=embedding_manager,
             query=query,
-            user_id=user_id,
+            user_id=user.id,
             exclude_ids=exclude_ids,
             n_candidates=limit * CANDIDATE_MULTIPLIER,
             w_semantic=W_SEMANTIC,
@@ -80,11 +79,12 @@ async def search_conversation_history(
 
     results = []
     for row in rows:
-        content = json.loads(row["content"])
+        msg = Message.model_validate(dict(row))
+        content = msg.content
         if isinstance(content, dict) and content.get("type") == "text":
             content = content["text"]
-        ts = row["created_at"].strftime("%Y-%m-%d %H:%M UTC")
-        results.append(f"[id={row['id']} | {row['role']} | {row['message_type']} | {ts}]\n{content}")
+        ts = msg.created_at.strftime("%Y-%m-%d %H:%M UTC")
+        results.append(f"[id={msg.id} | {msg.role} | {msg.message_type} | {ts}]\n{content}")
 
     return "\n\n---\n\n".join(results)
 
@@ -124,14 +124,12 @@ async def search_messages_by_time(
 
     conn = await get_conn_for_phone(phone)
     try:
-        user_id = await conn.fetchval(
-            "SELECT id FROM users WHERE phone = $1", phone
-        )
-        if user_id is None:
+        user = await UserRepository(conn).get_by_phone(phone)
+        if user is None:
             return f"No user found for phone {phone}"
 
         conditions = ["user_id = $1"]
-        params: list = [user_id]
+        params: list = [user.id]
 
         if after:
             try:
@@ -153,7 +151,8 @@ async def search_messages_by_time(
         where = " AND ".join(conditions)
         rows = await conn.fetch(
             f"""
-            SELECT id, role, message_type, content, period_start, period_end
+            SELECT id, user_id, role, message_type, content, created_at,
+                   period_start, period_end, source_message_ids
             FROM messages
             WHERE {where}
             ORDER BY period_end ASC
@@ -168,9 +167,11 @@ async def search_messages_by_time(
     if not rows:
         return "No messages found in that time range."
 
+    tz = ZoneInfo(user_tz)
     results = []
     for row in rows:
-        content = json.loads(row["content"])
+        msg = Message.model_validate(dict(row))
+        content = msg.content
         if isinstance(content, dict) and content.get("type") == "text":
             content = content["text"]
         elif isinstance(content, list):
@@ -180,11 +181,9 @@ async def search_messages_by_time(
                 if isinstance(block, dict) and block.get("type") == "text"
             ]
             content = " ".join(parts) if parts else str(content)
-
-        tz = ZoneInfo(user_tz)
-        ts = row["period_end"].astimezone(tz).strftime("%Y-%m-%d %H:%M %Z")
+        ts = msg.period_end.astimezone(tz).strftime("%Y-%m-%d %H:%M %Z")
         results.append(
-            f"[id={row['id']} | {row['role']} | {row['message_type']} | {ts}]\n{content}"
+            f"[id={msg.id} | {msg.role} | {msg.message_type} | {ts}]\n{content}"
         )
 
     return "\n\n---\n\n".join(results)
@@ -207,22 +206,23 @@ async def get_source_messages(phone: str, summary_id: int) -> str:
 
     conn = await get_conn_for_phone(phone)
     try:
-        summary = await conn.fetchrow(
+        summary_row = await conn.fetchrow(
             "SELECT message_type, source_message_ids FROM messages WHERE id = $1",
             summary_id,
         )
-        if summary is None:
+        if summary_row is None:
             return f"No message found with id {summary_id}."
-        if summary["message_type"] != "summary":
-            return f"Message {summary_id} is not a summary (type: {summary['message_type']})."
+        if summary_row["message_type"] != "summary":
+            return f"Message {summary_id} is not a summary (type: {summary_row['message_type']})."
 
-        source_ids = summary["source_message_ids"]
+        source_ids = summary_row["source_message_ids"]
         if not source_ids:
             return f"Summary {summary_id} has no recorded source message IDs."
 
         rows = await conn.fetch(
             """
-            SELECT id, role, message_type, content, period_end
+            SELECT id, user_id, role, message_type, content, created_at,
+                   period_start, period_end, source_message_ids
             FROM messages
             WHERE id = ANY($1)
             ORDER BY period_end ASC
@@ -238,7 +238,8 @@ async def get_source_messages(phone: str, summary_id: int) -> str:
     tz = ZoneInfo(user_tz)
     results = []
     for row in rows:
-        content = json.loads(row["content"])
+        msg = Message.model_validate(dict(row))
+        content = msg.content
         if isinstance(content, dict) and content.get("type") == "text":
             content = content["text"]
         elif isinstance(content, list):
@@ -248,10 +249,9 @@ async def get_source_messages(phone: str, summary_id: int) -> str:
                 if isinstance(block, dict) and block.get("type") == "text"
             ]
             content = " ".join(parts) if parts else str(content)
-
-        ts = row["period_end"].astimezone(tz).strftime("%Y-%m-%d %H:%M %Z")
+        ts = msg.period_end.astimezone(tz).strftime("%Y-%m-%d %H:%M %Z")
         results.append(
-            f"[id={row['id']} | {row['role']} | {row['message_type']} | {ts}]\n{content}"
+            f"[id={msg.id} | {msg.role} | {msg.message_type} | {ts}]\n{content}"
         )
 
     return "\n\n---\n\n".join(results)

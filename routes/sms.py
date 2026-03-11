@@ -41,10 +41,10 @@ async def sms_webhook(
         return _handle_help()
 
     if message_body.lower() in ["reset", "clear"]:
-        return await _handle_reset(user.get("phone", sender))
+        return await _handle_reset(user.phone if user else sender)
 
-    logger.info(f"User found: {user.get('found')}")
-    if not user.get("found"):
+    logger.info(f"User found: {user is not None}")
+    if not user:
         return await handle_registration(sender, message_body)
 
     try:

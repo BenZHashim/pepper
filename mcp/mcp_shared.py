@@ -82,12 +82,11 @@ async def release_conn(conn):
 
 async def get_user_timezone(phone: str) -> str:
     """Get a user's timezone, falling back to the server default."""
+    from models import UserRepository
     pool = await get_pool()
     async with pool.acquire() as conn:
-        row = await conn.fetchrow(
-            "SELECT timezone FROM users WHERE phone = $1", phone
-        )
-    return row["timezone"] if row else TIMEZONE
+        tz = await UserRepository(conn).get_timezone(phone)
+    return tz if tz else TIMEZONE
 
 
 # ─── Preferences ──────────────────────────────────────────────────────────────

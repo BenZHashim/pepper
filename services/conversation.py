@@ -29,6 +29,7 @@ from pgvector.asyncpg import register_vector
 
 from .embeddings import EmbeddingManager
 from .memory_utils import extract_text, to_tsquery, run_hybrid_search
+from models import UserRepository, MessageRepository, Message
 
 logger = logging.getLogger(__name__)
 
@@ -61,8 +62,8 @@ class ConversationManager:
 
     # ── Internal helpers ──────────────────────────────────────────────────────
     async def _get_user_id(self, conn: asyncpg.Connection, phone: str) -> Optional[int]:
-        row = await conn.fetchrow("SELECT id FROM users WHERE phone = $1", phone)
-        return row["id"] if row else None
+        user = await UserRepository(conn).get_by_phone(phone)
+        return user.id if user else None
 
     # ── Search legs ───────────────────────────────────────────────────────────
 
@@ -173,19 +174,7 @@ class ConversationManager:
                 logger.warning(f"add_message: no user found for phone {phone}")
                 return
 
-            await conn.execute(
-                """
-                INSERT INTO messages
-                    (user_id, role, message_type, content, embedding, search_vector)
-                VALUES
-                    ($1, $2, 'raw', $3::jsonb, $4, to_tsvector('english', $5))
-                """,
-                user_id,
-                role,
-                json_content,
-                embedding,
-                text_for_index,
-            )
+            await MessageRepository(conn).add(user_id, role, json_content, embedding, text_for_index)
 
     async def get_history(
         self,
@@ -210,22 +199,13 @@ class ConversationManager:
             if user_id is None:
                 return []
             user_tz = await conn.fetchval("SELECT timezone FROM users WHERE id = $1", user_id)
+
             # 1. Recent raw messages — always included verbatim
-            recent_rows = await conn.fetch(
-                """
-                SELECT id, role, message_type, content, created_at, period_end
-                FROM messages
-                WHERE user_id      = $1
-                AND message_type = 'raw'
-                ORDER BY period_end DESC
-                LIMIT $2
-                """,
-                user_id,
-                RECENT_WINDOW,
-            )
-            recent_ids: set[int] = {row["id"] for row in recent_rows}
+            recent_messages = await MessageRepository(conn).get_recent(user_id, RECENT_WINDOW)
+            recent_ids: set[int] = {msg.id for msg in recent_messages}
 
             # 2. Hybrid search over all older message types
+            search_rows = []
             if query and query.strip():
                 search_rows = await run_hybrid_search(
                     conn=conn,
@@ -239,28 +219,29 @@ class ConversationManager:
                     w_recency=W_RECENCY,
                     semantic_k=SEMANTIC_K,
                 )
-                
 
             # 3. Merge and sort chronologically
-            all_rows: dict[int, asyncpg.Record] = {r["id"]: r for r in recent_rows}
+            all_messages: dict[int, Message] = {msg.id: msg for msg in recent_messages}
             for row in search_rows:
-                all_rows.setdefault(row["id"], row)
+                msg = Message.model_validate(dict(row))
+                if msg.id not in all_messages:
+                    all_messages[msg.id] = msg
 
-            sorted_rows = sorted(all_rows.values(), key=lambda r: r["period_end"])
+            sorted_messages = sorted(all_messages.values(), key=lambda m: m.period_end)
 
         # 4. Deserialise to Claude message dicts
         history: list[dict] = []
-        for row in sorted_rows:
-            content = json.loads(row["content"])
+        for msg in sorted_messages:
+            content = msg.content
             if isinstance(content, dict) and content.get("type") == "text":
                 content = content["text"]
 
-            period_end_local = row["period_end"].astimezone(ZoneInfo(user_tz))
+            period_end_local = msg.period_end.astimezone(ZoneInfo(user_tz))
             timestamp = period_end_local.strftime("%Y-%m-%d %H:%M %Z")
-            header = f"[id={row['id']} time={timestamp}]"
+            header = f"[id={msg.id} time={timestamp}]"
 
-            role = row["role"]
-            if row["message_type"] in ("summary", "fact"):
+            role = msg.role
+            if msg.message_type in ("summary", "fact"):
                 role = "user"
 
             history.append({"role": role, "content": f"{header} {content}"})
@@ -273,7 +254,7 @@ class ConversationManager:
             user_id = await self._get_user_id(conn, phone)
             if user_id is None:
                 return
-            await conn.execute("DELETE FROM messages WHERE user_id = $1", user_id)
+            await MessageRepository(conn).delete_all(user_id)
 
     async def active_count(self) -> int:
         """Count users with at least one message in the last SESSION_TIMEOUT minutes."""

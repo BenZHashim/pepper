@@ -11,6 +11,7 @@ from mcp_shared import (
     get_conn_for_phone,
     release_conn,
 )
+from models import SkillRepository
 
 
 @mcp.tool()
@@ -25,21 +26,13 @@ async def get_skill_content(name: str, phone: str = None) -> str:
     """
     conn = await get_conn_for_phone(phone)
     try:
-        row = await conn.fetchrow(
-            """
-            SELECT s.content
-            FROM skills s
-            JOIN users u ON u.id = s.user_id
-            WHERE u.phone = $1 AND s.name = $2
-            """,
-            phone, name,
-        )
+        skill = await SkillRepository(conn).get_by_name(phone, name)
     finally:
         await release_conn(conn)
 
-    if not row:
+    if not skill:
         return f"No skill found with name '{name}'."
-    return row["content"]
+    return skill.content
 
 
 @mcp.tool()
@@ -52,18 +45,10 @@ async def delete_skill(name: str, phone: str = None) -> dict:
     """
     conn = await get_conn_for_phone(phone)
     try:
-        result = await conn.execute(
-            """
-            DELETE FROM skills
-            WHERE name = $1
-            AND user_id = (SELECT id FROM users WHERE phone = $2)
-            """,
-            name, phone,
-        )
+        deleted = await SkillRepository(conn).delete(name, phone)
     finally:
         await release_conn(conn)
 
-    deleted = int(result.split()[-1])
-    if deleted == 0:
+    if not deleted:
         return {"success": False, "error": f"No skill found with name '{name}'."}
     return {"success": True, "deleted_name": name}

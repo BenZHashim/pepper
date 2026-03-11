@@ -8,9 +8,10 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import PlainTextResponse
 from fastmcp import Client as MCPClient
 
-import deps 
+import deps
 from config import ADMIN_TOKEN, TWILIO_PHONE_NUMBER, get_mcp_url
 from services.database import get_db_pool
+from models import UserRepository
 
 logger = logging.getLogger(__name__)
 
@@ -29,9 +30,10 @@ async def trigger_summarisation(
 ) -> dict:
     pool = await get_db_pool()
     async with pool.acquire() as conn:
-        user_id = await conn.fetchval("SELECT id FROM users WHERE phone = $1", phone)
-    if not user_id:
+        user = await UserRepository(conn).get_by_phone(phone)
+    if not user:
         raise HTTPException(status_code=404, detail=f"No user found for {phone}")
+    user_id = user.id
 
     candidates = await deps.summarization_manager.get_pruning_candidates(user_id)
     await deps.summarization_manager.run_summarisation_pass(user_id)
@@ -151,11 +153,7 @@ async def google_callback(code: str, state_param: str = Query(alias="state")):
     }
     pool = await get_db_pool()
     async with pool.acquire() as conn:
-        await conn.execute(
-            "UPDATE users SET google_tokens = $1 WHERE phone = $2",
-            json.dumps(tokens),
-            phone,
-        )
+        await UserRepository(conn).update(phone, google_tokens=tokens)
 
     message = "Your Google account is now connected! You can ask me to check your emails or manage your calendar."
     await deps.conversation_manager.add_message(phone, "assistant", message)

@@ -12,6 +12,10 @@ from mcp_shared import (
     PREFERENCES_TEMPLATE,
     _merge_preferences,
 )
+from models import User, UserRepository
+
+# Fields that must never enter the agent's context window.
+_SENSITIVE = {"google_tokens"}
 
 
 @mcp.tool()
@@ -25,25 +29,13 @@ async def get_user(phone: str = None) -> dict:
     """
     conn = await get_conn_for_phone(phone)
     try:
-        row = await conn.fetchrow(
-            "SELECT id, name, phone, preferences_prompt, timezone, created_at FROM users WHERE phone = $1",
-            phone,
-        )
+        user = await UserRepository(conn).get_by_phone(phone)
     finally:
         await release_conn(conn)
 
-    if not row:
+    if not user:
         return {"found": False}
-
-    return {
-        "found": True,
-        "id": row["id"],
-        "name": row["name"],
-        "phone": row["phone"],
-        "preferences_prompt": row["preferences_prompt"],
-        "timezone": row["timezone"],
-        "created_at": row["created_at"].isoformat(),
-    }
+    return {"found": True, **user.model_dump(mode="json", exclude=_SENSITIVE | {"preferences_prompt"})}
 
 
 @mcp.tool()
@@ -58,34 +50,19 @@ async def create_user(name: str, timezone: str, phone: str = None, preferences_p
         preferences_prompt: Optional: The user's preferences prompt.
     """
     prompt = preferences_prompt or PREFERENCES_TEMPLATE
-    tz = timezone
 
     pool = await get_pool()
     async with pool.acquire() as conn:
         try:
-            row = await conn.fetchrow(
-                """
-                INSERT INTO users (phone, name, timezone, preferences_prompt)
-                VALUES ($1, $2, $3, $4)
-                RETURNING id, name, phone, timezone, preferences_prompt, created_at
-                """,
-                phone, name, tz, prompt,
-            )
+            user = await UserRepository(conn).create(phone, name, timezone, prompt)
         except asyncpg.UniqueViolationError:
             return {"success": False, "error": f"User with phone {phone} already exists."}
 
-    return {
-        "success": True,
-        "id": row["id"],
-        "name": row["name"],
-        "phone": row["phone"],
-        "timezone": row["timezone"],
-        "preferences_prompt": row["preferences_prompt"],
-    }
+    return {"success": True, **user.model_dump(mode="json", exclude=_SENSITIVE)}
 
 
 @mcp.tool()
-async def update_user(phone: str = None, name: str = None, timezone: str = None, preferences_prompt: str = None) -> dict:
+async def update_user(phone: str = None, name: str = None, timezone: str = None) -> dict:
     """
     Update the user's profile information.
     Use when the user wants to change their name, update their timezone,
@@ -93,41 +70,25 @@ async def update_user(phone: str = None, name: str = None, timezone: str = None,
     Trigger phrases: 'my name is actually', 'call me', 'I moved to',
     'I'm in a different timezone now', 'update my profile'.
     Args:
-        name:               New name, or None to leave unchanged.
-        timezone:           New IANA timezone e.g. 'America/Chicago', or None to leave unchanged.
-        preferences_prompt: New custom AI preferences, or None to leave unchanged.
+        name:     New name, or None to leave unchanged.
+        timezone: New IANA timezone e.g. 'America/Chicago', or None to leave unchanged.
     """
     conn = await get_conn_for_phone(phone)
     try:
-        row = await conn.fetchrow(
-            "SELECT id, name, timezone, preferences_prompt FROM users WHERE phone = $1", phone
-        )
-        if not row:
+        repo = UserRepository(conn)
+        existing = await repo.get_by_phone(phone)
+        if not existing:
             return {"success": False, "error": "User not found."}
 
-        new_name   = name               or row["name"]
-        new_tz     = timezone           or row["timezone"]
-        new_prompt = preferences_prompt or row["preferences_prompt"]
-
-        updated = await conn.fetchrow(
-            """
-            UPDATE users SET name = $1, timezone = $2, preferences_prompt = $3
-            WHERE phone = $4
-            RETURNING id, name, phone, timezone, preferences_prompt
-            """,
-            new_name, new_tz, new_prompt, phone,
-        )
+        updates = {
+            "name":               name               or existing.name,
+            "timezone":           timezone           or existing.timezone,
+        }
+        user = await repo.update(phone, **updates)
     finally:
         await release_conn(conn)
+    return {"success": True, **user.model_dump(mode="json", exclude=_SENSITIVE | {"preferences_prompt"})}
 
-    return {
-        "success": True,
-        "id": updated["id"],
-        "name": updated["name"],
-        "phone": updated["phone"],
-        "timezone": updated["timezone"],
-        "preferences_prompt": updated["preferences_prompt"],
-    }
 
 @mcp.tool()
 async def update_user_preferences(instruction: str, phone: str = None) -> dict:
@@ -152,16 +113,12 @@ async def update_user_preferences(instruction: str, phone: str = None) -> dict:
     """
     conn = await get_conn_for_phone(phone)
     try:
-        row = await conn.fetchrow(
-            "SELECT id, preferences_prompt FROM users WHERE phone = $1", phone
-        )
-        existing = row["preferences_prompt"] if row else ""
-        user_id  = row["id"] if row else None
-        updated  = await _merge_preferences(existing, instruction, user_id=user_id)
-        await conn.execute(
-            "UPDATE users SET preferences_prompt = $1 WHERE phone = $2",
-            updated, phone
-        )
+        repo = UserRepository(conn)
+        user = await repo.get_by_phone(phone)
+        existing = user.preferences_prompt if user else ""
+        user_id = user.id if user else None
+        updated = await _merge_preferences(existing, instruction, user_id=user_id)
+        await repo.update(phone, preferences_prompt=updated)
     finally:
         await release_conn(conn)
     return {"success": True}

@@ -540,24 +540,25 @@ async def update_calendar_event(
             old_start_utc = old_start_dt.astimezone(ZoneInfo("UTC"))
             new_start_utc = new_start_dt.astimezone(ZoneInfo("UTC"))
 
+            from models import UserRepository, ReminderRepository
             conn = await get_conn_for_phone(phone)
             try:
-                user = await conn.fetchrow("SELECT id FROM users WHERE phone = $1", phone)
+                user = await UserRepository(conn).get_by_phone(phone)
                 if user:
                     linked = await conn.fetch(
-                        """SELECT id, remind_at FROM reminders
+                        """SELECT id, user_id, message, remind_at, recurrence, fired,
+                                  google_event_id, created_at
+                           FROM reminders
                            WHERE user_id = $1 AND google_event_id = $2 AND fired = FALSE""",
-                        user["id"], event_id,
+                        user.id, event_id,
                     )
+                    repo = ReminderRepository(conn)
                     shifted = 0
-                    for reminder in linked:
+                    for row in linked:
                         # Preserve the exact offset each reminder had from the old start
-                        offset = old_start_utc - reminder["remind_at"].replace(tzinfo=ZoneInfo("UTC"))
+                        offset = old_start_utc - row["remind_at"].replace(tzinfo=ZoneInfo("UTC"))
                         new_remind_at = new_start_utc - offset
-                        await conn.execute(
-                            "UPDATE reminders SET remind_at = $1 WHERE id = $2",
-                            new_remind_at, reminder["id"],
-                        )
+                        await repo.reschedule(row["id"], new_remind_at)
                         shifted += 1
                     if shifted:
                         result += f"\n{shifted} SMS reminder(s) rescheduled."
